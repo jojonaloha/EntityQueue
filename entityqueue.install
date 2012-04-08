@@ -133,15 +133,16 @@ function entityqueue_schema() {
         'not null' => TRUE,
       ),
     ),
+    'primary key' => array('qeid'),
     'unique keys' => array(
       'queue_entity' => array('qid', 'entity_type', 'entity_id'),
-      'queue_position' => array('qid', 'position'),
+      'queue_weight' => array('qid', 'weight'),
     ),
     'indexes' => array(
       'qid' => array('qid'),
       'entity_type' => array('entity_type'),
       'entity_id' => array('entity_id'),
-      'position' => array('position'),
+      'weight' => array('weight'),
     ),
   );
 

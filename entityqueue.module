@@ -207,8 +207,8 @@ function entityqueue_views_api() {
  * Acccess callback.
  */
 function entityqueue_access_admin_or_manage() {
-  $administer = user_access('administer entityqueue')
-  return $adminiser || user_access('manage entityqueues');
+  $administer = user_access('administer entityqueue');
+  return $administer || user_access('manage entityqueues');
 }
 
 /**
@@ -221,7 +221,7 @@ function entityqueue_queue_access($queue, $account = NULL) {
   }
 
   // Check global user_access permissions first
-  $administer = user_access('adminster entityqueue')
+  $administer = user_access('adminster entityqueue');
   $manage = $administer || user_access('manage entityqueues');
 
   if ($manage || user_access('populate all entityqueues')) {
@@ -258,7 +258,7 @@ function entityqueue_entity_and_queue_access($entity_type, $entity, $queue) {
  * Load an entityqueue object from the database.
  */
 function entityqueue_load($qid, $reset = FALSE) {
-  $qids = (isset($qid)) ? array($qid) : array());
+  $qids = (isset($qid) ? array($qid) : array());
   $conditions = array();
   $queue = entity_load('entityqueue', $qids, $conditions, $reset);
   return $queue ? reset($queue) : FALSE;

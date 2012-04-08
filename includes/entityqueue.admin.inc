@@ -122,46 +122,21 @@ function entityqueue_admin_view($queue) {
 
   $query = db_select('entityqueue_entity', 'ee')
     ->distinct();
-  $query->fields('ee', array('entity_type', 'entity_id', 'weight'))
+  $query->fields('ee', array('qeid'))
     ->condition('ee.qid', $queue->qid)
     ->orderBy('ee.weight');
-  $result = $query->execute();
+  $qeids = $query->execute()->fetchCol();
 
-  $entity_groups = array();
-  $queue_items = array();
-  $i = 0;
-  foreach ($result as $row) {
-    // Create groups of entities by entity type, so we can use entity_load
-    $entity_groups[$row->entity_type][] = $row->entity_id;
-    $queue_items[$row->entity_type . ':' . $row->entity_id] = $i;
-    $i++;
-  }
+  // Load entityqueueitem entities
+  $queue_items = entity_load('entityqueueitem', $qeids);
 
-  // Load entities by type
-  $entities_by_type = array();
-  foreach ($entity_groups as $type => $ids) {
-    $entities_by_type[$type] = entity_load($type, $ids);
-  }
-  unset($entity_groups);
-
-  $entities = array();
-  foreach ($queue_items as $key => $pos) {
-    list($type, $id) = explode(':', $key);
-    $entities[$pos] = $entities_by_type[$type][$id];
-    // Set entity_type and entity_id so we know what they are later
-    $entities[$pos]->entity_type = $type;
-    $entities[$pos]->entity_id = $id;
-  }
-  unset($entities_by_type);
-  unset($queue_items);
-
-  return drupal_get_form('entityqueue_arrange_form_' . $queue->qid, $queue, $entities);
+  return drupal_get_form('entityqueue_arrange_form_' . $queue->qid, $queue, $queue_items);
 }
 
 /**
  * Form builder.
  */
-function entityqueue_arrange_form($form, &$form_state, $queue, $entities) {
+function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
   $form = array('#tree' => TRUE);
 
   $count = count($entities);
@@ -171,21 +146,20 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $entities) {
   $form['entities']['#queue'] = (array) $queue;
 
   $form_state['queue'] = $queue;
-  $form_state['entities'] = $entities;
 
-  foreach ($entities as $weight => $entity) {
-    $type = $entity->entity_type;
-    $id = $entity->entity_id;
-    $key = $type . ':' . $id;
+  foreach ($queue_items as $weight => $queue_item) {
+    $type = $queue_item->entity_type;
+    $id = $queue_item->entity_id;
+    $entity = $queue_item->entity;
+    $key = $queue_item->qeid;
 
-    //$info = entity_get_info($type, $entity);
-    $title = entity_label($type, $entity);
+    $title = entity_label($entity->entity_type, $entity);
     $uri = entity_uri($type, $entity);
-    $form['entities'][$key]['title'] = array(
+    $form['queue_items'][$key]['title'] = array(
       '#markup' => l($title, $uri),
     );
 
-    $form['entities'][$key]['weight'] = array(
+    $form['queue_items'][$key]['weight'] = array(
       '#type' => 'weight',
       '#delta' => $count,
       '#default_value' => $weight,
@@ -199,7 +173,7 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $entities) {
         'title' => t('Remove from queue'),
         'style' => 'diaplay: none;',
         'class' => array('entityqueue-remove', 'entityqueue-remove-' . $type),
-        'id' => 'entityqueue-remove-' . $type . '-' . $id,
+        'id' => 'entityqueue-remove-' . $key,
       ),
       'query' => array(
         'destination' => drupal_get_destination(),
@@ -207,12 +181,17 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $entities) {
       ),
     );
 
-    $form['entities'][$key]['remove'] = array(
+    $form['queue_items'][$key]['remove'] = array(
       '#type' => 'link',
       '#title' => t('remove'),
       '#href' => 'entityqueue/' . $queue->qid . '/remove/' . $type . '/' . $id,
       '#options' => $options,
     );
+
+    $form_state['queue_items'][$key] = array(
+      'entityqueueitem' => $queue_item,
+    );
+    field_attach_form('entityqueueitem', $queue_item, $form['queue_items'][$key], $form_state['queue_items'][$key]);
   }
 
   // Field for adding entities to queue
@@ -222,20 +201,23 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $entities) {
       'class' => array('container-inline'),
     ),
   );
-  $form['add']['entity'] = array(
+  $form['add']['queue_item'] = array(
     '#type' => 'textfield',
     '#autocomplete_path' => 'entityqueue/autocomplete/' . $queue->qid,
     '#maxlength' => 1024,
     '#attributes' => array(
-      'placeholder' => t('Enter the title of a entity to add it to the queue'),
+      'placeholder' => t('Enter the title of an entity to add it to the queue'),
       'class' => array('entityqueue-add-entity'),
     ),
   );
   $form['add']['submit'] = array(
     '#type' => 'submit',
-    '#value' => t('Add entity'),
+    '#value' => t('Add item'),
     '#submit' => array('entityqueue_arrange_form_add_submit'),
   );
+  $form_state['add'] = array();
+  $queue_item = new stdClass();
+  field_attach_form('entityqueueitem', $queue_item, $form['add'], $form_state['add']);
 
   $form['actions'] = array('#type' => 'actions');
   $form['actions']['submit'] = array(
