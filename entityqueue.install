@@ -1,0 +1,149 @@
+<?php
+/**
+ * @file
+ * Install, update and uninstall functions for the entityqueue module.
+ */
+
+/**
+ * Implements hook_schema()
+ */
+function entityqueue_schema() {
+  $schema['entityqueue_queue'] = array(
+    'description' => 'Base table for queues, storing global information for the queue.',
+    'fields' => array(
+      'qid' => array(
+        'description' => 'The primary identifier for a queue.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'name' => array(
+        'description' => 'The machine name for the queue.',
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+      ),
+      'title' => array(
+        'description' => 'The human readable name of the queue.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'size' => array(
+        'description' => 'How many entities this queue will hold.',
+        'type' => 'int',
+        'default' => 0,
+      ),
+    ),
+    'primary key' => array('qid'),
+    'unique keys' => array(
+      'name' => array('name'),
+    ),
+  );
+
+  $schema['entityqueue_roles'] = array(
+    'description' => 'Defines the roles which are allowed to add or remove items from a particular entityqueue.',
+    'fields' => array(
+      'qid' => array(
+        'description' => 'Primary key for {entityqueue_queue}',
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'rid' => array(
+        'description' => 'Primary key for {role}',
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+    ),
+    'primary key' => array('qid', 'rid'),
+    'indexes' => array(
+      'qid' => array('qid'),
+      'rid' => array('rid'),
+    ),
+  );
+
+  $schema['entityqueue_bundles'] = array(
+    'description' => 'Defines the entity types and bundles allowed in a particular entityqueue.',
+    'fields' => array(
+      'qid' => array(
+        'description' => 'Primary key for {entityqueue_queue}',
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'entity_type' => array(
+        'description' => 'The type of entity, IE: node, user, taxonomy_term',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'bundle' => array(
+        'description' => 'The bundle for the entity.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE,
+      ),
+    ),
+    'primary key' => array('qid', 'entity_type', 'bundle'),
+    'indexes' => array(
+      'qid' => array('qid'),
+      'entity_type' => array('entity_type'),
+      'bundle' => array('bundle'),
+    ),
+  );
+
+  $schema['entityqueue_entity'] = array(
+    'description' => 'Indicates which entities are in a particular entityqueue.',
+    'fields' => array(
+      'qeid' => array(
+        'description' => 'The primary identifier for the item in the queue.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'qid' => array(
+        'description' => 'Primary key for {entityqueue_queue}',
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'entity_type' => array(
+        'description' => 'The type of entity, IE: node, user, taxonomy_term',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'entity_id' => array(
+        'description' => 'The unique identifier for the entity.',
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'weight' => array(
+        'description' => 'The weight of the item in the queue.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+    ),
+    'unique keys' => array(
+      'queue_entity' => array('qid', 'entity_type', 'entity_id'),
+      'queue_position' => array('qid', 'position'),
+    ),
+    'indexes' => array(
+      'qid' => array('qid'),
+      'entity_type' => array('entity_type'),
+      'entity_id' => array('entity_id'),
+      'position' => array('position'),
+    ),
+  );
+
+  return $schema;
+}

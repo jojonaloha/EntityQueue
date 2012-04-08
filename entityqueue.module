@@ -1,0 +1,351 @@
+<?php
+/**
+ * @file
+ * Adds the ability to create multiple queues of entities.
+ */
+
+
+/**
+ * Implements hook_entity_delete()
+ */
+function entityqueue_entity_delete($entity, $type) {
+  // Ignore our entity types, to avoid infinite loops
+  if ($type != 'entityqueue' && $type != 'entityqueueitem') {
+    $info = entity_get_info($type);
+    $entity_id = $entity->{$info['entity keys']['id']};
+
+    // If an entity is deleted, ensure it is also removed from any queues
+    $result = db_query("SELECT qeid FROM {entityqueue_entity} WHERE entity_type=:entity_type AND entity_id=:entity_id", array(
+      ':entity_type' => $type,
+      ':entity_id' => $entity_id,
+    ));
+
+    $qeids = array_values($result->fetchCol());
+    entityqueueitem_delete_multiple($qeids);
+  }
+}
+
+/**
+ * Implements hook_entity_info()
+ */
+function entityqueue_entity_info() {
+  $types['entityqueue'] = array(
+    'label' => t('Entity Queue'),
+    'base table' => 'entityqueue_queue',
+    'uri callback' => 'entityqueue_uri',
+    'fieldable' => TRUE,
+    'entity keys' => array(
+      'id' => 'qid',
+    ),
+  );
+
+  $types['entityqueueitem'] = array(
+    'label' => t('Entity Queue Item'),
+    'base table' => 'entityqueue_entity',
+    'uri callback' => 'entityqueueitem_uri',
+    'fieldable' => TRUE,
+    'entity keys' => array(
+      'id' => 'qeid',
+    )
+  );
+
+  return $types;
+}
+
+/**
+ * Implements hook_entity_view()
+ */
+function entityqueue_entity_view($entity, $type, $view_mode, $langcode) {
+  $links = entityqueue_entity_links($entity);
+  if (!empty($links)) {
+    $entity->content['links']['entityqueue'] = array(
+      '#links' => $links,
+      '#theme' => 'links__entity__entityqueue',
+    );
+  }
+}
+
+/**
+ * Implements hook_menu()
+ */
+function entityqueue_menu() {
+  $items['admin/structure/entityqueue'] = array(
+    'title' => 'Entityqueues',
+    'page callback' => 'entityqueue_view_queues',
+    'access callback' => 'entityqueue_access_admin_or_manage',
+    'description' => 'Create and maintain simple entityqueues.',
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  $items['admin/structure/entityqueue/list'] = array(
+    'title' => 'List',
+    'page callback' => 'nodequeue_view_queues',
+    'access callback' => 'entityqueue_access_admin_or_manage',
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+  );
+
+  $items['admin/structure/entityqueue/settings'] = array(
+    'title' => 'Settings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('entityqueue_admin_settings'),
+    'access arguments' => array('administer entityqueue'),
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_LOCAL_TASK,
+  );
+
+  $items['admin/structure/entityqueue/%entityqueue'] = array(
+    'page callback' => 'entityqueue_admin_view',
+    'page arguments' => array(3),
+    'access callback' => 'entityqueue_queue_access',
+    'access arguments' => array(3),
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/structure/entityqueue/%entityqueue/view'] = array(
+    'title' => 'View',
+    'page callback' => 'entityqueue_admin_view',
+    'page arguments' => array(3),
+    'access callback' => 'entityqueue_queue_access',
+    'access arguments' => array(3),
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+  );
+
+  $items['admin/structure/entityqueue/%entityqueue/edit'] = array(
+    'title' => 'Edit queue',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('entityqueue_admin_edit', 3),
+    'access callback' => 'entityqueue_access_admin_or_manage',
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_LOCAL_TASK,
+  );
+
+  $items['admin/structure/entityqueue/%entityqueue/delete'] = array(
+    'title' => 'Delete',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('entityqueue_admin_delete', 3),
+    'access callback' => 'entityqueue_access_admin_or_manage',
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/structure/entityqueue/%entityqueue/clear'] = array(
+    'title' => 'Clear',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('entityqueue_clear_confirm', 3),
+    'access callback' => 'entityqueue_queue_access',
+    'access arguments' => array(3),
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['entityqueue/%entityqueue/add/%/%entityqueue_entity'] = array(
+    'page callback' => 'entityqueue_admin_add_entity',
+    'page arguments' => array(1, 3),
+    'access callback' => 'entityqueue_entity_and_queue_access',
+    'access arguments' => array(3, 4, 1),
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['entityqueue/%entityqueue/remove/%/%entityqueue_entity'] = array(
+    'page callback' => 'entityqueue_admin_remove_entity',
+    'page arguments' => array(1, 3),
+    'access callback' => 'entityqueue_entity_and_queue_access',
+    'access arguments' => array(3, 4, 1),
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['entityqueue/autocomplete/%entityqueue'] = array(
+    'title' => 'Autocomplete',
+    'page callback' => 'entityqueue_autocomplete',
+    'page arguments' => array(2),
+    'access callback' => 'entityqueue_queue_access',
+    'access arguments' => array(2),
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_permission()
+ */
+function entityqueue_permission() {
+  return array(
+    'administer entityqueue' => array(
+      'title' => t('Administer EntityQueue'),
+      'description' => t('Administer the entityqueue module.'),
+    ),
+    'manage entityqueues' => array(
+      'title' => t('Manage queues'),
+      'description' => t('Create, update and delete queues and add fields to queues.'),
+    ),
+    'populate all entityqueues' => array(
+      'title' => t('Populate all queues'),
+      'description' => t('Add or remove entities from any queue.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_views_api()
+ */
+function entityqueue_views_api() {
+  return array(
+    'api' => 3,
+    'path' => drupal_get_path('module', 'entityqueue') . '/includes',
+  );
+}
+
+/**
+ * Acccess callback.
+ */
+function entityqueue_access_admin_or_manage() {
+  $administer = user_access('administer entityqueue')
+  return $adminiser || user_access('manage entityqueues');
+}
+
+/**
+ * Access callback.
+ */
+function entityqueue_queue_access($queue, $account = NULL) {
+  if (!$account) {
+    global $user;
+    $account = $user;
+  }
+
+  // Check global user_access permissions first
+  $administer = user_access('adminster entityqueue')
+  $manage = $administer || user_access('manage entityqueues');
+
+  if ($manage || user_access('populate all entityqueues')) {
+    return TRUE;
+  }
+
+  // Check queue roles against users roles
+  $roles = array_keys((array) $account->roles);
+  return (bool) array_intersect($roles, $queue->roles);
+}
+
+/**
+ * Access callback.
+ */
+function entityqueue_entity_and_queue_access($entity_type, $entity, $queue) {
+  $queue_access = entityqueue_queue_access($queue);
+
+  // If the entity uses bundles
+  /* @todo was modeling this after nodequeue_nodequeue_access(),
+     but unsure what it was doing that nodequeue_queue_access()
+     wasn't. Initially thought that it was checking node_access(),
+     but there is no built-in api to check 'entity_access'.
+  $info = entity_get_info($entity_type);
+  if (isset($info['entity keys']['bundle'])) {
+    $bundle = $entity->{$info['entity keys']['bundle']};
+  }
+  */
+  $entity_access = TRUE;
+
+  return $queue_access && $entity_access;
+}
+
+/**
+ * Load an entityqueue object from the database.
+ */
+function entityqueue_load($qid, $reset = FALSE) {
+  $qids = (isset($qid)) ? array($qid) : array());
+  $conditions = array();
+  $queue = entity_load('entityqueue', $qids, $conditions, $reset);
+  return $queue ? reset($queue) : FALSE;
+}
+
+/**
+ *
+ */
+function entityqueue_load_multiple($qids, $reset = FALSE) {
+  $conditions = array();
+  return entity_load('entityqueue', $qids, $conditions, $reset);
+}
+
+/**
+ * Load an entityqueueitem object from the database.
+ */
+function entityqueueitem_load($qeid, $reset = FALSE) {
+  $qeids = (isset($qeid) ? array($qeid) : array());
+  $conditions = array();
+  $item = entity_load('entityqueueitem', $qeids, $conditions, $reset);
+  return $item ? reset($item) : FALSE;
+}
+
+/**
+ * Load an entity object from the database.
+ */
+function entityqueue_entity_to_arg($arg, $map, $index) {
+  // Urls should be in the format /path/to/%entity_type/%entity_id
+  // In the menu item, you use /path/to/%/%entityqueue_entity
+  $type = $map[$index - 1];
+  $id = $map[$index];
+  $ids = array($id);
+  $entity = entity_load($type, $ids);
+  return $entity ? reset($entity) : FALSE;
+}
+
+/**
+ * Delete multiple queue items.
+ */
+function entityqueueitem_delete_multiple($qeids) {
+  $transaction = db_transaction();
+  if (!empty($qeids)) {
+    $items = entity_load('entityqueueitem', $qeids);
+
+    try {
+      foreach ($items as $qeid => $item) {
+        // Call the entity delete callbacks
+        module_invoke_all('entity_delete', $item, 'entityqueueitem');
+        field_attach_delete('entityqueueitem', $item);
+
+        // Remove from search index if needed
+        if (module_exists('search')) {
+          search_reindex($qeid, 'entityqueueitem');
+        }
+      }
+
+      // Delete after calling hooks so they can query tables as needed.
+      db_delete('entityqueue_entity')
+        ->condition('qeid', $qeids, 'IN')
+        ->execute();
+    }
+    catch (Exception $e) {
+      $transaction->rollback();
+      watchdog_exception('entityqueue', $e);
+      throw $e;
+    }
+
+    // Clear the necessary caches
+    entity_get_controller('entityqueueitem')->resetCache();
+  }
+}
+
+/**
+ * Entity uri callback.
+ */
+function entityqueue_uri($queue) {
+  return array(
+    'path' => 'admin/structure/entityqueue/' . $queue->qid,
+  );
+}
+
+/**
+ * Entity uri callback.
+ */
+function entityqueueitem_uri($queue_item) {
+  return array(
+    'path' => 'admin/structure/entityqueue/' . $queue_item->qid,
+    'fragment' => 'item-' . $queue_item->qeid,
+  );
+}
