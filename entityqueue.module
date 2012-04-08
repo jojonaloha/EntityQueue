@@ -4,6 +4,8 @@
  * Adds the ability to create multiple queues of entities.
  */
 
+define('ENTITYQUEUE_CREATED', 0);
+define('ENTITYQUEUE_UPDATED', 1);
 
 /**
  * Implements hook_entity_delete()
@@ -56,13 +58,27 @@ function entityqueue_entity_info() {
  * Implements hook_entity_view()
  */
 function entityqueue_entity_view($entity, $type, $view_mode, $langcode) {
-  $links = entityqueue_entity_links($entity);
+  $links = entityqueue_entity_links($type, $entity);
   if (!empty($links)) {
     $entity->content['links']['entityqueue'] = array(
       '#links' => $links,
       '#theme' => 'links__entity__entityqueue',
     );
   }
+}
+
+/**
+ * Implements hook_forms()
+ */
+function entityqueue_forms($form_id) {
+  $forms = array();
+  if (strpos($form_id, 'entityqueue_arrange_form_') === 0) {
+    $forms[$form_id] = array(
+      'callback' => 'entityqueue_arrange_form',
+    );
+  }
+
+  return $forms;
 }
 
 /**
@@ -80,7 +96,7 @@ function entityqueue_menu() {
 
   $items['admin/structure/entityqueue/list'] = array(
     'title' => 'List',
-    'page callback' => 'nodequeue_view_queues',
+    'page callback' => 'entityqueue_view_queues',
     'access callback' => 'entityqueue_access_admin_or_manage',
     'file' => 'includes/entityqueue.admin.inc',
     'type' => MENU_DEFAULT_LOCAL_TASK,
@@ -93,6 +109,15 @@ function entityqueue_menu() {
     'access arguments' => array('administer entityqueue'),
     'file' => 'includes/entityqueue.admin.inc',
     'type' => MENU_LOCAL_TASK,
+  );
+
+  $items['admin/structure/entityqueue/add'] = array(
+    'title' => 'Add',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('entityqueue_admin_edit'),
+    'access callback' => 'entityqueue_access_admin_or_manage',
+    'file' => 'includes/entityqueue.admin.inc',
+    'type' => MENU_LOCAL_ACTION,
   );
 
   $items['admin/structure/entityqueue/%entityqueue'] = array(
@@ -296,6 +321,17 @@ function entityqueue_entity_to_arg($arg, $map, $index) {
 }
 
 /**
+ * Returns an array of entityqueue links for an entity.
+ */
+function entityqueue_entity_links($type, $entity) {
+  $links = array();
+
+  // @todo Find queues that the entity could belong to
+
+  return $links;
+}
+
+/**
  * Delete multiple queue items.
  */
 function entityqueueitem_delete_multiple($qeids) {
@@ -329,6 +365,13 @@ function entityqueueitem_delete_multiple($qeids) {
     // Clear the necessary caches
     entity_get_controller('entityqueueitem')->resetCache();
   }
+}
+
+/**
+ * Save a queue.
+ */
+function entityqueue_save(&$queue) {
+  // @todo
 }
 
 /**

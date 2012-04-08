@@ -93,7 +93,8 @@ function entityqueue_view_queues() {
   );
 
   $page['pager'] = array('#markup' => theme('pager'));
-
+  dpm('testing');
+  dpm($page);
   return $page;
 }
 
@@ -249,4 +250,134 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
   }
 
   return $form;
+}
+
+/**
+ * Add or edit a queue.
+ */
+function entityqueue_admin_edit($form, &$form_state, $queue = NULL) {
+  // Adding queue
+  if (!isset($queue)) {
+    $queue = (object) array(
+      'title' => '',
+      'name' => NULL,
+      'size' => 0,
+      'roles' => array(),
+    );
+    drupal_set_title('Add Queue');
+  }
+  else {
+    drupal_set_title(t('Edit Queue @title', array(
+      '@title' => $queue->title,
+    )));
+  }
+
+  $form['title'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Title'),
+    '#default_value' => $queue->title,
+    '#size' => 50,
+    '#required' => TRUE,
+    '#maxlength' => 64,
+    '#description' => t('Enter the name of the queue'),
+  );
+
+  $form['name'] = array(
+    '#type' => 'machine_name',
+    '#maxlength' => 32,
+    '#machine_name' => array(
+      'exists' => 'entityqueue_machine_name_exists',
+      'source' => array('title'),
+    ),
+    '#description' => t('A unique machine-readable name for this queue. It must only contain lowercase letters, numbers, and underscores.'),
+  );
+
+  if (!empty($queue->name)) {
+    $form['name']['#default_value'] = $queue->name;
+    $form['name']['#disabled'] = TRUE;
+    $form['name']['#value'] = $queue->name;
+  }
+
+  $form['size'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Queue size'),
+    '#default_value' => $queue->size,
+    '#size' => 2,
+    '#maxlength' => 2,
+    '#description' => t('The maximum number of entities that can go in the queue. Enter 0 for no limit'),
+  );
+
+  $roles = user_roles();
+  $manage_all_queues = user_roles(FALSE, 'populate all entityqueues');
+  $manage_all_queues += user_roles(FALSE, 'manage entityqueues');
+  $manage_all_queues += user_roles(FALSE, 'administer entityqueue');
+
+  $form['roles'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Roles'),
+    '#default_value' => is_array($queue->roles) ? $queue->roles : array(),
+    '#options' => $roles,
+    '#description' => t('Check each role that can add entities to the queue.'),
+  );
+
+  foreach ($roles as $rid => $role) {
+    $form['roles'][$rid] = array(
+      '#type' => 'checkbox',
+      '#title' => $role,
+      '#default_value' => (isset($manage_all_queues[$rid]) || in_array($rid, $queue->roles)) ? TRUE : FALSE,
+      '#disabled' => (isset($manage_all_queues[$rid])) ? TRUE : FALSE,
+    );
+  }
+
+  // @todo add entity types/bundles
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Submit'),
+  );
+
+  if (isset($queue->qid)) {
+    $form[] = array(
+      '#type' => 'submit',
+      '#value' => t('Delete'),
+      '#validate' => array('nodequeue_edit_queue_form_delete_validate'),
+      '#submit' => array('nodequeue_edit_queue_form_delete_submit'),
+    );
+    $form['qid'] = array(
+      '#type' => 'value',
+      '#value' => $queue->qid,
+    );
+    $form['count'] = array(
+      '#type' => 'value',
+      '#value' => $queue->count,
+    );
+  }
+
+  return $form;
+}
+
+/**
+ * Validate function for entityqueue_admin_edit()
+ */
+function entityqueue_admin_edit_validate($form, &$form_state) {
+  if (empty($form_state['values']['title'])) {
+    form_set_error('title', t('Please enter a title for this queue.'));
+  }
+  $queue = (object) $form_state['values'];
+  // Fix checkboxes.
+  $queue->roles = array_keys(array_filter($queue->roles));
+  $queue->types = array_keys(array_filter($queue->types));
+}
+
+/**
+ * Submit function entityqueue_admin_edit()
+ */
+function entityqueue_admin_edit_submit($form, &$form_state) {
+  $queue = (object) $form_state['values'];
+  // Fix checkboxes.
+  $queue->roles = array_keys(array_filter($queue->roles));
+  $queue->types = array_keys(array_filter($queue->types));
+
+  $status = entityqueue_save($queue);
+
 }
