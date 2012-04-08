@@ -55,6 +55,48 @@ function entityqueue_entity_info() {
 }
 
 /**
+ * Implements hook_entity_load()
+ */
+function entityqueue_entity_load($entities, $type) {
+  if ($type == 'entityqueue') {
+    // Prepopulate queues with empty values
+    foreach ($entities as $entity) {
+      $entity->roles = array();
+      $entity->bundles = array();
+      $entity->count = 0;
+    }
+
+    $qids = array_keys($entities);
+    // Load roles
+    $query = db_select('entityqueue_roles', 'r')
+      ->fields('r', array('qid', 'rid'))
+      ->condition('qid', $qids, 'IN');
+    $result = $query->execute();
+    foreach ($result as $row) {
+      $entities[$row->qid]->roles[] = $row->rid;
+    }
+    // Load bundles
+    $query = db_select('entityqueue_bundles', 'b')
+      ->fields('b', array('qid', 'entity_type', 'bundle'));
+    $query->condition('qid', $qids, 'IN');
+    $result = $query->execute();
+    foreach ($result as $row) {
+      $entities[$row->qid]->bundles[$row->entity_type][] = $row->bundle;
+    }
+    // Load count
+    $query = db_select('entityqueue_entity', 'e')
+      ->fields('e', array('qid'));
+    $query->addExpression('COUNT(qeid)', 'count');
+    $query->condition('qid', $qids, 'IN')
+      ->groupBy('qid');
+    $result = $query->execute();
+    foreach ($result as $row) {
+      $entities[$row->qid]->count = $row->count;
+    }
+  }
+}
+
+/**
  * Implements hook_entity_view()
  */
 function entityqueue_entity_view($entity, $type, $view_mode, $langcode) {
@@ -112,7 +154,7 @@ function entityqueue_menu() {
   );
 
   $items['admin/structure/entityqueue/add'] = array(
-    'title' => 'Add',
+    'title' => 'Add queue',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('entityqueue_admin_edit'),
     'access callback' => 'entityqueue_access_admin_or_manage',
@@ -290,7 +332,7 @@ function entityqueue_load($qid, $reset = FALSE) {
 }
 
 /**
- *
+ * Load multiple queues.
  */
 function entityqueue_load_multiple($qids, $reset = FALSE) {
   $conditions = array();
@@ -368,10 +410,101 @@ function entityqueueitem_delete_multiple($qeids) {
 }
 
 /**
+ * Determine if the machine name is in use.
+ */
+function entityqueue_machine_name_exists($machine_name) {
+  $queue_exists = db_query_range('SELECT 1 FROM {entityqueue_queue} WHERE name = :name', 0, 1, array(':name' => $machine_name))->fetchField();
+
+  return $queue_exists;
+}
+
+/**
  * Save a queue.
  */
 function entityqueue_save(&$queue) {
-  // @todo
+  $transaction = db_transaction();
+
+  try {
+    // Load stored entity, if any.
+    if (!empty($queue->qid)) {
+      $queue->original = entity_load_unchanged('entityqueue', $queue->qid);
+    }
+
+    field_attach_presave('entityqueue', $queue);
+    if (!isset($queue->is_new)) {
+      $queue->is_new = empty($queue->qid);
+    }
+
+    module_invoke_all('entity_presave', $queue, 'entityqueue');
+
+    // Save the queue.
+    if ($queue->is_new) {
+      drupal_write_record('entityqueue_queue', $queue);
+      $op = 'insert';
+
+      if (function_exists('views_invalidate_cache')) {
+        views_invalidate_cache();
+      }
+    }
+    else {
+      // For existing queues, update the queue record which matches
+      // $queue->qid.
+      drupal_write_record('entityqueue_queue', $queue, 'qid');
+      $op = 'update';
+
+      // Remove roles
+      db_delete('entityqueue_roles')
+        ->condition('qid', $queue->qid)
+        ->execute();
+      // Remove bundles
+      db_delete('entityqueue_bundles')
+        ->condition('qid', $queue->qid)
+        ->execute();
+    }
+
+    // Save roles
+    if (is_array($queue->roles) && count($queue->roles)) {
+      $query = db_insert('entityqueue_roles')
+        ->fields(array('qid', 'rid'));
+      foreach ($queue->roles as $rid) {
+        $query->values(array($queue->qid, $rid));
+      }
+      $query->execute();
+    }
+
+    // Save bundles
+    if (is_array($queue->bundles) && count($queue->bundles)) {
+      $query = db_insert('entityqueue_bundles')
+        ->fields(array('qid', 'entity_type', 'bundle'));
+      foreach ($queue->bundles as $entity_type => $bundles) {
+        foreach ($bundles as $bundle) {
+          $query->values(array($queue->qid, $entity_type, $bundle));
+        }
+      }
+      $query->execute();
+    }
+
+    // Save fields.
+    $function = "field_attach_$op";
+    $function('entityqueue', $queue);
+
+    module_invoke_all('entity_' . $op, $queue, 'entityqueue');
+
+    // Clear internal properties.
+    unset($queue->is_new);
+    unset($queue->original);
+    // Clear the static loading cache.
+    entity_get_controller('entityqueue')->resetCache(array($queue->qid));
+
+    // Ignore slave server temporarily to give time for the
+    // saved entity to be propagated to the slave.
+    db_ignore_slave();
+  }
+  catch (Exception $e) {
+    $transaction->rollback();
+    watchdog_exception('entityqueue', $e);
+    throw $e;
+  }
 }
 
 /**

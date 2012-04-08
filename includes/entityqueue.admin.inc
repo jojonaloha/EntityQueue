@@ -17,6 +17,7 @@ function entityqueue_view_queues() {
   // Build sortable table header.
   $header = array(
     'title' => array('data' => t('Title'), 'field' => 'eq.title'),
+    'count' => array('data' => t('Count')),
     'size' => array('data' => t('Size'), 'field' => 'eq.size'),
     'operations' => array('data' => t('Operations')),
   );
@@ -74,6 +75,7 @@ function entityqueue_view_queues() {
           '#href' => 'admin/structure/entityqueue/' . $queue->qid,
         ),
       ),
+      'count' => check_plain($queue->count),
       'size' => check_plain($queue->size),
       'operations' => array(
         'data' => array(
@@ -85,16 +87,15 @@ function entityqueue_view_queues() {
     );
   }
 
-  $page['queues'] = array(
+  $page['content']['queues'] = array(
     '#theme' => 'table',
     '#header' => $header,
     '#rows' => $rows,
     '#empty' => t('No queues available.'),
   );
 
-  $page['pager'] = array('#markup' => theme('pager'));
-  dpm('testing');
-  dpm($page);
+  $page['content']['pager'] = array('#markup' => theme('pager'));
+
   return $page;
 }
 
@@ -307,6 +308,7 @@ function entityqueue_admin_edit($form, &$form_state, $queue = NULL) {
     '#description' => t('The maximum number of entities that can go in the queue. Enter 0 for no limit'),
   );
 
+  // Roles
   $roles = user_roles();
   $manage_all_queues = user_roles(FALSE, 'populate all entityqueues');
   $manage_all_queues += user_roles(FALSE, 'manage entityqueues');
@@ -329,7 +331,34 @@ function entityqueue_admin_edit($form, &$form_state, $queue = NULL) {
     );
   }
 
-  // @todo add entity types/bundles
+  // Entity types
+  $all_entity_info = entity_get_info();
+  $form['bundles'] = array(
+    '#type' => 'fieldset',
+    '#tree' => TRUE,
+    '#title' => t('Entity Types'),
+  );
+
+  foreach ($all_entity_info as $entity_type => $info) {
+    // Skip our entities to avoid an infinite loop
+    if ($entity_type == 'entityqueue' || $entity_type == 'entityqueueitem') {
+      continue;
+    }
+
+    $bundles = array();
+    if (is_array($info['bundles']) && count($info['bundles'])) {
+      foreach ($info['bundles'] as $value => $bundle_info) {
+        $bundles[$value] = $bundle_info['label'];
+      }
+      $form['bundles'][$entity_type] = array(
+        '#type' => 'checkboxes',
+        '#title' => $info['label'],
+        '#default_value' => is_array($queue->bundles) && isset($queue->bundles[$entity_type]) ? $queue->bundles[$entity_type] : array(),
+        '#options' => $bundles,
+        '#description' => t('Check each @entity type that can be added to the queue.', array('@entity' => $info['label'])),
+      );
+    }
+  }
 
   $form['submit'] = array(
     '#type' => 'submit',
@@ -366,7 +395,15 @@ function entityqueue_admin_edit_validate($form, &$form_state) {
   $queue = (object) $form_state['values'];
   // Fix checkboxes.
   $queue->roles = array_keys(array_filter($queue->roles));
-  $queue->types = array_keys(array_filter($queue->types));
+  foreach ($queue->bundles as $entity_type => $bundles) {
+    $bundles = array_keys(array_filter($bundles));
+    if (count($bundles)) {
+      $queue->bundles[$entity_type] = $bundles;
+    }
+    else {
+      unset($queue->bundles[$entity_type]);
+    }
+  }
 }
 
 /**
@@ -376,8 +413,27 @@ function entityqueue_admin_edit_submit($form, &$form_state) {
   $queue = (object) $form_state['values'];
   // Fix checkboxes.
   $queue->roles = array_keys(array_filter($queue->roles));
-  $queue->types = array_keys(array_filter($queue->types));
+  foreach ($queue->bundles as $entity_type => $bundles) {
+    $bundles = array_keys(array_filter($bundles));
+    if (count($bundles)) {
+      $queue->bundles[$entity_type] = $bundles;
+    }
+    else {
+      unset($queue->bundles[$entity_type]);
+    }
+  }
 
   $status = entityqueue_save($queue);
 
+  if ($status === ENTITYQUEUE_CREATED) {
+    drupal_set_message(t('The queue @title has been created.', array(
+      '@title' => $queue->title,
+    )));
+  }
+  else {
+    drupal_set_message(t('The queue @title has been updated.', array(
+      '@title' => $queue->title,
+    )));
+  }
+  $form_state['redirect'] = 'admin/structure/entityqueue';
 }
