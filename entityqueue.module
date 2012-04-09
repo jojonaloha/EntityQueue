@@ -34,16 +34,19 @@ function entityqueue_entity_info() {
   $types['entityqueue'] = array(
     'label' => t('Entity Queue'),
     'base table' => 'entityqueue_queue',
+    'load hook' => 'entityqueue_load',
     'uri callback' => 'entityqueue_uri',
     'fieldable' => TRUE,
     'entity keys' => array(
       'id' => 'qid',
+      'label' => 'title',
     ),
   );
 
   $types['entityqueueitem'] = array(
     'label' => t('Entity Queue Item'),
     'base table' => 'entityqueue_entity',
+    'load hook' => 'entityqueueitem_load',
     'uri callback' => 'entityqueueitem_uri',
     'fieldable' => TRUE,
     'entity keys' => array(
