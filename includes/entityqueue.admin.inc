@@ -49,20 +49,20 @@ function entityqueue_view_queues() {
   foreach($queues as $queue) {
     $operations['view'] = array(
       'title' => t('view'),
-      'href' => 'admin/structure/entityqueue/' . $queue->qid,
+      'href' => 'admin/structure/entityqueue/' . $queue->name,
       'destination' => $destination,
     );
 
     if (entityqueue_access_admin_or_manage()) {
       $operations['edit'] = array(
         'title' => t('edit'),
-        'href' => 'admin/structure/entityqueue/' . $queue->qid . '/edit',
+        'href' => 'admin/structure/entityqueue/' . $queue->name . '/edit',
         'destination' => $destination,
       );
 
       $operations['delete'] = array(
         'title' => t('delete'),
-        'href' => 'admin/structure/entityqueue/' . $queue->qid . '/delete',
+        'href' => 'admin/structure/entityqueue/' . $queue->name . '/delete',
         'destination' => $destination,
       );
     }
@@ -72,7 +72,7 @@ function entityqueue_view_queues() {
         'data' => array(
           '#type' => 'link',
           '#title' => $queue->title,
-          '#href' => 'admin/structure/entityqueue/' . $queue->qid,
+          '#href' => 'admin/structure/entityqueue/' . $queue->name,
         ),
       ),
       'count' => check_plain($queue->count),
@@ -141,11 +141,11 @@ function entityqueue_admin_view($queue) {
 function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
   $form = array('#tree' => TRUE);
 
-  $count = count($entities);
-  $form['entities'] = array();
-  $form['entities']['#theme'] = 'entityqueue_arrange_form_table';
+  $count = count($queue_items);
+  $form['queue_items'] = array();
+  $form['queue_items']['#theme'] = 'entityqueue_arrange_form_table';
 
-  $form['entities']['#queue'] = (array) $queue;
+  $form['queue_items']['#queue'] = (array) $queue;
 
   $form_state['queue'] = $queue;
 
@@ -215,6 +215,7 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
   $form['add']['submit'] = array(
     '#type' => 'submit',
     '#value' => t('Add item'),
+    '#validate' => array('entityqueue_arrange_form_add_validate'),
     '#submit' => array('entityqueue_arrange_form_add_submit'),
   );
   $form_state['add'] = array();
@@ -251,6 +252,43 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
   }
 
   return $form;
+}
+
+/**
+ *  Form validation handler.
+ *
+ *  @see  entityqueue_arrange_form()
+ */
+function entityqueue_arrange_form_add_validate($form, &$form_state) {
+  $queue = $form_state['queue'];
+
+  $item = (object) $form_state['values']['queue_item'];
+  // @todo need to add field validation
+  //entity_form_field_validate('entityqueueitem', $form, $form_state);
+}
+
+/**
+ *  Form submission handler.
+ *
+ *  @see  entityqueue_arrange_form()
+ */
+function entityqueue_arrange_form_add_submit($form, &$form_state) {
+  $queue = $form_state['queue'];
+
+  if (isset($form_state['values']['queue_item'])) {
+    $value = $form_state['values']['queue_item'];
+    preg_match('/\[(\s+):(\d+)\]$/', $value, $matches);
+    $entity_type = $matches[1];
+    $entity_id = $matches[2];
+    if (empty($entity_type) || empty($entity_id)) {
+      form_set_error('', t('Please enter a valid @list', array(
+        '@list' => implode(', ', array_keys($queue->bundles)),
+      )));
+    }
+  }
+
+  // @todo build an entityqueueitem.
+  entityqueue_add_item($queue, $queue_item);
 }
 
 /**
@@ -353,24 +391,28 @@ function entityqueue_admin_edit($form, &$form_state, $queue = NULL) {
       $form['bundles'][$entity_type] = array(
         '#type' => 'checkboxes',
         '#title' => $info['label'],
-        '#default_value' => is_array($queue->bundles) && isset($queue->bundles[$entity_type]) ? $queue->bundles[$entity_type] : array(),
+        '#default_value' => isset($queue->bundles[$entity_type]) ? $queue->bundles[$entity_type] : array(),
         '#options' => $bundles,
         '#description' => t('Check each @entity type that can be added to the queue.', array('@entity' => $info['label'])),
       );
     }
   }
 
-  $form['submit'] = array(
+  $form['actions'] = array('#type' => 'actions');
+
+  $form['actions']['submit'] = array(
     '#type' => 'submit',
     '#value' => t('Submit'),
+    '#weight' => 5,
   );
 
   if (isset($queue->qid)) {
-    $form[] = array(
+    $form['actions']['delete'] = array(
       '#type' => 'submit',
       '#value' => t('Delete'),
       '#validate' => array('nodequeue_edit_queue_form_delete_validate'),
       '#submit' => array('nodequeue_edit_queue_form_delete_submit'),
+      '#weight' => 15,
     );
     $form['qid'] = array(
       '#type' => 'value',
@@ -382,6 +424,7 @@ function entityqueue_admin_edit($form, &$form_state, $queue = NULL) {
     );
   }
 
+  field_attach_form('entityqueue', $queue, $form, $form_state);
   return $form;
 }
 
@@ -404,6 +447,7 @@ function entityqueue_admin_edit_validate($form, &$form_state) {
       unset($queue->bundles[$entity_type]);
     }
   }
+  entity_form_field_validate('entityqueue', $form, $form_state);
 }
 
 /**
@@ -436,4 +480,110 @@ function entityqueue_admin_edit_submit($form, &$form_state) {
     )));
   }
   $form_state['redirect'] = 'admin/structure/entityqueue';
+}
+
+/**
+ * Page callback for autocomplete.
+ */
+function entityqueue_autocomplete() {
+  $args = func_get_args();
+  $queue = array_shift($args);
+  $string = implode('/', $args);
+
+  $entity_types = array_keys($queue->bundles);
+
+  $matches = array();
+  // Unfortunately there is no way to query across multiple entity base tables.
+  // @see http://api.drupal.org/api/drupal/includes%21entity.inc/function/EntityFieldQuery%3A%3AentityCondition/7
+  foreach ($entity_types as $entity_type) {
+    $info = entity_get_info($entity_type);
+    // If there is not a label property, we need to find the closest base
+    // table property for querying
+    $label_property = isset($info['entity keys']['label']) ? $info['entity keys']['label'] : FALSE;
+    if (!$label_property) {
+      $label_field = _entityqueue_find_substitute_label_field($info['base table'], array_values($info['entity_keys']));
+    }
+    else {
+      $label_field = $label_property;
+    }
+    $bundles = $queue->bundles[$entity_type];
+
+    $query = new EntityFieldQuery();
+    $query->entityCondition('entity_type', $entity_type)
+      ->entityCondition('bundle', $bundles, 'IN');
+    if ($label_field) {
+      $query->propertyCondition($label_field, $string, 'CONTAINS');
+    }
+
+    $query->range(0, variable_get('entityqueue_autocomplete_limit', 10));
+    $result = $query->execute();
+
+    if (isset($result[$entity_type])) {
+      // Get the id property.
+      $id_property = $info['entity keys']['id'];
+      // Check for a label callback.
+      $label_callback = isset($info['label callback']) && function_exists($info['label callback']) ? $info['label callback'] : FALSE;
+
+      // Get all the id's to reduce number of queries when we do an entity_load.
+      $ids = array();
+      foreach ($result[$entity_type] as $row) {
+        $ids[] = $row->{$id_property};
+      }
+      $objects = entity_load($entity_type, $ids);
+      foreach ($objects as $object) {
+        // If the label is available, use that
+        if ($label_property) {
+          $label = $object->{$label_property};
+        }
+        // Otherwise use the label callback
+        elseif ($label_callback) {
+          $label = $label_callback($object);
+        }
+        // Add a "token" to our label so we can get our entity_type and id.
+        $token = $entity_type . ':' . $object->{$id_property};
+        $label .= ' [' . $token . ']';
+        $matches[$token] = $label;
+      }
+    }
+  }
+
+  drupal_json_output(drupal_map_assoc($matches));
+}
+
+/**
+ * Finds the best substitute field for using in search by "label"
+ *
+ * @param  string $base_table
+ *   The name of the table to search, as provided to drupal_get_schema()
+ * @param  array $ignore_fields
+ *   Fields that cannot be used for the label.
+ *
+ * @return  string|false
+ *   The field name, returns FALSE if no candidate field is found.
+ */
+function _entityqueue_find_substitute_label_field($base_table, $ignore_fields = NULL) {
+  $schema = drupal_get_schema($base_table);
+  // Most appropriate fields would be named one of the following.
+  $best_candidates = array('title', 'label', 'name');
+
+  if (!is_array($ignore_fields)) {
+    $ignore_fields = array();
+  }
+
+  // Return the first field that matches one of our candidates
+  $fields = array_diff(array_keys($schema['fields']), $ignore_fields);
+  foreach ($best_candidates as $candidate) {
+    if (in_array($candidate, $fields)) {
+      return $candidate;
+    }
+  }
+
+  // Otherwise, use the first varchar field
+  foreach ($fields as $field) {
+    if ($schema['fields'][$field]['type'] == 'varchar') {
+      return $field;
+    }
+  }
+
+  return FALSE;
 }

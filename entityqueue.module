@@ -31,6 +31,7 @@ function entityqueue_entity_delete($entity, $type) {
  * Implements hook_entity_info()
  */
 function entityqueue_entity_info() {
+  // @todo? add an api to add additional bundles?
   $types['entityqueue'] = array(
     'label' => t('Entity Queue'),
     'base table' => 'entityqueue_queue',
@@ -41,8 +42,18 @@ function entityqueue_entity_info() {
       'id' => 'qid',
       'label' => 'title',
     ),
+    'bundles' => array(
+      'entityqueue' => array(
+        'label' => t('Entity Queue'),
+        'admin' => array(
+          'path' => 'admin/structure/entityqueue',
+          'access callback' => 'entityqueue_access_admin_or_manage',
+        ),
+      ),
+    ),
   );
 
+  // @todo add bundles based on the entityqueue
   $types['entityqueueitem'] = array(
     'label' => t('Entity Queue Item'),
     'base table' => 'entityqueue_entity',
@@ -51,8 +62,20 @@ function entityqueue_entity_info() {
     'fieldable' => TRUE,
     'entity keys' => array(
       'id' => 'qeid',
-    )
+    ),
   );
+
+  foreach (entityqueue_get_names() as $type => $name) {
+    $types['entityqueueitem']['bundles'][$type] = array(
+      'label' => $name,
+      'admin' => array(
+        'path' => 'admin/structure/entityqueue/%entityqueue_by_name',
+        'real path' => 'admin/structure/entityqueue/' . str_replace('_', '-', $type),
+        'bundle argument' => 3,
+        'access callback' => 'entityqueue_access_admin_or_manage',
+      ),
+    );
+  }
 
   return $types;
 }
@@ -165,7 +188,7 @@ function entityqueue_menu() {
     'type' => MENU_LOCAL_ACTION,
   );
 
-  $items['admin/structure/entityqueue/%entityqueue'] = array(
+  $items['admin/structure/entityqueue/%entityqueue_by_name'] = array(
     'page callback' => 'entityqueue_admin_view',
     'page arguments' => array(3),
     'access callback' => 'entityqueue_queue_access',
@@ -174,7 +197,7 @@ function entityqueue_menu() {
     'type' => MENU_CALLBACK,
   );
 
-  $items['admin/structure/entityqueue/%entityqueue/view'] = array(
+  $items['admin/structure/entityqueue/%entityqueue_by_name/view'] = array(
     'title' => 'View',
     'page callback' => 'entityqueue_admin_view',
     'page arguments' => array(3),
@@ -184,7 +207,7 @@ function entityqueue_menu() {
     'type' => MENU_DEFAULT_LOCAL_TASK,
   );
 
-  $items['admin/structure/entityqueue/%entityqueue/edit'] = array(
+  $items['admin/structure/entityqueue/%entityqueue_by_name/edit'] = array(
     'title' => 'Edit queue',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('entityqueue_admin_edit', 3),
@@ -193,7 +216,7 @@ function entityqueue_menu() {
     'type' => MENU_LOCAL_TASK,
   );
 
-  $items['admin/structure/entityqueue/%entityqueue/delete'] = array(
+  $items['admin/structure/entityqueue/%entityqueue_by_name/delete'] = array(
     'title' => 'Delete',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('entityqueue_admin_delete', 3),
@@ -202,7 +225,7 @@ function entityqueue_menu() {
     'type' => MENU_CALLBACK,
   );
 
-  $items['admin/structure/entityqueue/%entityqueue/clear'] = array(
+  $items['admin/structure/entityqueue/%entityqueue_by_name/clear'] = array(
     'title' => 'Clear',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('entityqueue_clear_confirm', 3),
@@ -335,6 +358,33 @@ function entityqueue_load($qid, $reset = FALSE) {
 }
 
 /**
+ * Load an entityqueue object from the database by machine name.
+ */
+function entityqueue_by_name_load($name, $reset = FALSE) {
+  static $queues;
+
+  if (!$reset && isset($queues[$name])) {
+    return $queues[$name];
+  }
+
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', 'entityqueue')
+    ->propertyCondition('name', $name);
+  $result = $query->execute();
+
+  if (isset($result['entityqueue'])) {
+    $qids = array_keys($result['entityqueue']);
+    $conditions = array();
+    $entities = entity_load('entityqueue', $qids, $conditions, $reset);
+    if ($entities) {
+      $queues[$name] = reset($entities);
+    }
+  }
+
+  return isset($queues[$name]) ? $queues[$name] : FALSE;
+}
+
+/**
  * Load multiple queues.
  */
 function entityqueue_load_multiple($qids, $reset = FALSE) {
@@ -363,6 +413,40 @@ function entityqueue_entity_to_arg($arg, $map, $index) {
   $ids = array($id);
   $entity = entity_load($type, $ids);
   return $entity ? reset($entity) : FALSE;
+}
+
+/**
+ * Returns the machine names for different queues.
+ */
+function entityqueue_get_names($rebuild = FALSE) {
+  $cid = 'entityqueue_types:' . $GLOBALS['language']->language;
+
+  if (!$rebuild) {
+    $entityqueue_types = &drupal_static(__FUNCTION__);
+    if (isset($entityqueue_types)) {
+      return $entityqueue_types;
+    }
+
+    if ($cache = cache_get($cid)) {
+      $entityqueue_types = $cache->data;
+      return $entityqueue_types;
+    }
+  }
+
+  $entityqueue_types = array();
+  $query = db_select('entityqueue_queue', 'q');
+  $query->addTag('translatable')
+    ->fields('q', array('name', 'title'))
+    ->orderBy('q.name', 'ASC');
+
+  foreach ($query->execute() as $type_object) {
+    $name_db = $type_object->name;
+    $entityqueue_types[$name_db] = $type_object->title;
+  }
+
+  cache_set($cid, $entityqueue_types);
+
+  return $entityqueue_types;
 }
 
 /**
@@ -498,6 +582,7 @@ function entityqueue_save(&$queue) {
     unset($queue->original);
     // Clear the static loading cache.
     entity_get_controller('entityqueue')->resetCache(array($queue->qid));
+    entityqueue_get_names(TRUE);
 
     // Ignore slave server temporarily to give time for the
     // saved entity to be propagated to the slave.
@@ -511,11 +596,34 @@ function entityqueue_save(&$queue) {
 }
 
 /**
+ * Delete a queue.
+ */
+function entityqueue_delete($qid) {
+  // @todo look at node_delete as an example
+  db_delete('entityqueue_roles')
+    ->condition('qid', $qid)
+    ->execute();
+  entityqueue_get_names(TRUE);
+}
+
+/**
+ * Add an item to a queue.
+ *
+ * @param  object $queue
+ *   The queue to add an item to.
+ * @param  object $queue_item
+ *  The queue_item object.
+ */
+function entityqueue_add_item($queue, $item) {
+
+}
+
+/**
  * Entity uri callback.
  */
 function entityqueue_uri($queue) {
   return array(
-    'path' => 'admin/structure/entityqueue/' . $queue->qid,
+    'path' => 'admin/structure/entityqueue/' . $queue->name,
   );
 }
 
@@ -524,7 +632,7 @@ function entityqueue_uri($queue) {
  */
 function entityqueueitem_uri($queue_item) {
   return array(
-    'path' => 'admin/structure/entityqueue/' . $queue_item->qid,
+    'path' => 'admin/structure/entityqueue/' . $queue_item->name,
     'fragment' => 'item-' . $queue_item->qeid,
   );
 }

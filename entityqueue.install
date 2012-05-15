@@ -5,7 +5,7 @@
  */
 
 /**
- * Implements hook_schema()
+ * Implements hook_schema().
  */
 function entityqueue_schema() {
   $schema['entityqueue_queue'] = array(
@@ -135,7 +135,6 @@ function entityqueue_schema() {
     ),
     'primary key' => array('qeid'),
     'unique keys' => array(
-      'queue_entity' => array('qid', 'entity_type', 'entity_id'),
       'queue_weight' => array('qid', 'weight'),
     ),
     'indexes' => array(
@@ -147,4 +146,16 @@ function entityqueue_schema() {
   );
 
   return $schema;
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function entityqueue_uninstall() {
+  // Remove entityqueue bundles
+  $bundles = db_query("SELECT name FROM {entityqueue_queue}")->fetchCol();
+  dpm($bundles);
+  foreach ($bundles as $bundle) {
+    field_attach_delete_bundle('entityqueue', $bundle);
+  }
 }
