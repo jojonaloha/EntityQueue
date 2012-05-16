@@ -155,7 +155,7 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
     $entity = $queue_item->entity;
     $key = $queue_item->qeid;
 
-    $title = entity_label($entity->entity_type, $entity);
+    $title = entity_label($queue_item->entity_type, $entity);
     $uri = entity_uri($type, $entity);
     $form['queue_items'][$key]['title'] = array(
       '#markup' => l($title, $uri),
@@ -262,7 +262,24 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
 function entityqueue_arrange_form_add_validate($form, &$form_state) {
   $queue = $form_state['queue'];
 
-  $item = (object) $form_state['values']['queue_item'];
+  if (isset($form_state['values']['queue_item'])) {
+    $value = $form_state['values']['queue_item'];
+    preg_match('/\[(\w+):(\d+)\]/', $value, $matches);
+    $entity_type = $matches[1];
+    $entity_id = $matches[2];
+    if (empty($entity_type) || empty($entity_id)) {
+      form_set_error('', t('Please enter a valid @list', array(
+        '@list' => implode(', ', array_keys($queue->bundles)),
+      )));
+    }
+  }
+
+  $queue_item = (object) array(
+    'entity_type' => $entity_type,
+    'entity_id' => $entity_id,
+  );
+  $form_state['values']['entityqueueitem'] = $queue_item;
+
   // @todo need to add field validation
   //entity_form_field_validate('entityqueueitem', $form, $form_state);
 }
@@ -275,20 +292,8 @@ function entityqueue_arrange_form_add_validate($form, &$form_state) {
 function entityqueue_arrange_form_add_submit($form, &$form_state) {
   $queue = $form_state['queue'];
 
-  if (isset($form_state['values']['queue_item'])) {
-    $value = $form_state['values']['queue_item'];
-    preg_match('/\[(\s+):(\d+)\]$/', $value, $matches);
-    $entity_type = $matches[1];
-    $entity_id = $matches[2];
-    if (empty($entity_type) || empty($entity_id)) {
-      form_set_error('', t('Please enter a valid @list', array(
-        '@list' => implode(', ', array_keys($queue->bundles)),
-      )));
-    }
-  }
-
-  // @todo build an entityqueueitem.
-  entityqueue_add_item($queue, $queue_item);
+  // @todo build entityqueueitem
+  entityqueue_add_item($queue, $form_state['values']['entityqueueitem']);
 }
 
 /**
@@ -509,8 +514,19 @@ function entityqueue_autocomplete() {
     $bundles = $queue->bundles[$entity_type];
 
     $query = new EntityFieldQuery();
-    $query->entityCondition('entity_type', $entity_type)
-      ->entityCondition('bundle', $bundles, 'IN');
+    $query->entityCondition('entity_type', $entity_type);
+    // Taxonomy_term and comment entities don't support
+    // entityCondition('bundle') queries.
+    if (in_array($entity_type, array('taxonomy_term', 'comment'))) {
+      // Add tags to the query so we can hook_query_alter() the SelectQuery,
+      // since at this point we can't do innerJoin's and stuff.
+      $query->addTag('entityqueue_entity_query');
+      $query->addTag('entityqueue_' . $entity_type);
+      $query->addMetaData('bundles', $bundles);
+    }
+    else {
+      $query->entityCondition('bundle', $bundles, 'IN');
+    }
     if ($label_field) {
       $query->propertyCondition($label_field, $string, 'CONTAINS');
     }

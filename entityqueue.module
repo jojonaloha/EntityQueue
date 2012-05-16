@@ -70,7 +70,7 @@ function entityqueue_entity_info() {
       'label' => $name,
       'admin' => array(
         'path' => 'admin/structure/entityqueue/%entityqueue_by_name',
-        'real path' => 'admin/structure/entityqueue/' . str_replace('_', '-', $type),
+        'real path' => 'admin/structure/entityqueue/' . $type,
         'bundle argument' => 3,
         'access callback' => 'entityqueue_access_admin_or_manage',
       ),
@@ -84,6 +84,7 @@ function entityqueue_entity_info() {
  * Implements hook_entity_load()
  */
 function entityqueue_entity_load($entities, $type) {
+  // The main entityqueue
   if ($type == 'entityqueue') {
     // Prepopulate queues with empty values
     foreach ($entities as $entity) {
@@ -118,6 +119,24 @@ function entityqueue_entity_load($entities, $type) {
     $result = $query->execute();
     foreach ($result as $row) {
       $entities[$row->qid]->count = $row->count;
+    }
+  }
+  // The entityqueueitem
+  elseif ($type == 'entityqueueitem') {
+    $sub_entity_ids = array();
+    // Prepopulate with empty values
+    foreach ($entities as $entity) {
+      $entity->entity = new stdClass();
+      $sub_entity_ids[$entity->entity_type]['ids'][] = $entity->entity_id;
+      $sub_entity_ids[$entity->entity_type]['qeids'][] = $entity->qeid;
+    }
+
+    foreach ($sub_entity_ids as $sub_entity_type => $sub_entity_info) {
+      $sub_entities = entity_load($sub_entity_type, $sub_entity_info['ids']);
+      // Loop through the qeids and set the entity
+      foreach ($sub_entity_info['qeids'] as $key => $qeid) {
+        $entities[$qeid]->entity = $sub_entities[$sub_entity_info['ids'][$key]];
+      }
     }
   }
 }
@@ -287,6 +306,32 @@ function entityqueue_permission() {
 }
 
 /**
+ * Implements hook_query_TAG_alter()
+ */
+function entityqueue_query_entityqueue_entity_query_alter($query) {
+  // Check for taxonomy_term tag
+  if ($query->hasTag('entityqueue_taxonomy_term')) {
+    $bundles = $query->getMetaData('bundles');
+    $tables = $query->getTables();
+    $alias = $tables['taxonomy_term_data']['alias'];
+    $query->innerJoin('taxonomy_vocabulary', 'v', "v.vid = $alias.vid");
+    $query->condition('v.name', $bundles, 'IN');
+  }
+  // Check for comment tag
+  elseif ($query->hasTag('entityqueue_comment')) {
+    $old_bundles = $query->getMetaData('bundles');
+    $bundles = array();
+    foreach ($old_bundles as $bundle) {
+      $bundles[] = str_replace('comment_node_', '', $bundle);
+    }
+    $tables = $query->getTables();
+    $alias = $tables['comment']['alias'];
+    $query->innerJoin('node', 'n', "n.nid = $alias.nid");
+    $query->condition('n.type', $bundles, 'IN');
+  }
+}
+
+/**
  * Implements hook_views_api()
  */
 function entityqueue_views_api() {
@@ -445,7 +490,6 @@ function entityqueue_get_names($rebuild = FALSE) {
   }
 
   cache_set($cid, $entityqueue_types);
-
   return $entityqueue_types;
 }
 
@@ -612,10 +656,25 @@ function entityqueue_delete($qid) {
  * @param  object $queue
  *   The queue to add an item to.
  * @param  object $queue_item
- *  The queue_item object.
+ *  The entityqueueitem object.
  */
 function entityqueue_add_item($queue, $item) {
+  $weight = db_select('entityqueue_entity', 'e')
+    ->fields('e', array('weight'))
+    ->condition('qid', $queue->qid)
+    ->orderBy('weight', 'DESC')
+    ->range(0, 1)
+    ->execute()
+    ->fetchField();
 
+  if (!$weight) {
+    $weight = 1;
+  }
+
+  $query = db_insert('entityqueue_entity');
+  $query->fields(array('qid', 'entity_type', 'entity_id', 'weight'))
+    ->values(array($queue->qid, $item->entity_type, $item->entity_id, $weight))
+    ->execute();
 }
 
 /**
