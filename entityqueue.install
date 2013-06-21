@@ -152,10 +152,10 @@ function entityqueue_schema() {
  * Implements hook_uninstall().
  */
 function entityqueue_uninstall() {
-  // Remove entityqueue bundles
+  field_attach_delete_bundle('entityqueue', 'entityqueue');
+  // Remove entityqueueitem bundles
   $bundles = db_query("SELECT name FROM {entityqueue_queue}")->fetchCol();
-  dpm($bundles);
   foreach ($bundles as $bundle) {
-    field_attach_delete_bundle('entityqueue', $bundle);
+    field_attach_delete_bundle('entityqueueitem', $bundle);
   }
 }
