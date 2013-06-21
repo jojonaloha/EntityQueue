@@ -155,10 +155,12 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
     $entity = $queue_item->entity;
     $key = $queue_item->qeid;
 
-    $title = entity_label($queue_item->entity_type, $entity);
+    $title = entity_label($type, $entity);
     $uri = entity_uri($type, $entity);
+    $path = isset($uri['path']) ? $uri['path'] : NULL;
+    $uri_options = isset($uri['options']) ? $uri['options'] : array();
     $form['queue_items'][$key]['title'] = array(
-      '#markup' => l($title, $uri),
+      '#markup' => l($title, $path, $uri_options),
     );
 
     $form['queue_items'][$key]['weight'] = array(
@@ -166,19 +168,18 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
       '#delta' => $count,
       '#default_value' => $weight,
       '#attributes' => array(
-        'class' => 'weight',
+        'class' => array('weight'),
       ),
     );
 
     $options = array(
       '#attributes' => array(
         'title' => t('Remove from queue'),
-        'style' => 'diaplay: none;',
+        'style' => 'display: none;',
         'class' => array('entityqueue-remove', 'entityqueue-remove-' . $type),
         'id' => 'entityqueue-remove-' . $key,
       ),
-      'query' => array(
-        'destination' => drupal_get_destination(),
+      'query' => drupal_get_destination() + array(
         'token' => drupal_get_token($key),
       ),
     );

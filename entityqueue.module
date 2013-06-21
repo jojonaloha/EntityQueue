@@ -53,7 +53,6 @@ function entityqueue_entity_info() {
     ),
   );
 
-  // @todo add bundles based on the entityqueue
   $types['entityqueueitem'] = array(
     'label' => t('Entity Queue Item'),
     'base table' => 'entityqueue_entity',
@@ -224,6 +223,7 @@ function entityqueue_menu() {
     'access arguments' => array(3),
     'file' => 'includes/entityqueue.admin.inc',
     'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => -10,
   );
 
   $items['admin/structure/entityqueue/%entityqueue_by_name/edit'] = array(
@@ -301,6 +301,18 @@ function entityqueue_permission() {
     'populate all entityqueues' => array(
       'title' => t('Populate all queues'),
       'description' => t('Add or remove entities from any queue.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_theme().
+ */
+function entityqueue_theme() {
+  return array(
+    'entityqueue_arrange_form_table' => array(
+      'render element' => 'form',
+      'file' => 'entityqueue.theme.inc',
     ),
   );
 }
@@ -690,8 +702,9 @@ function entityqueue_uri($queue) {
  * Entity uri callback.
  */
 function entityqueueitem_uri($queue_item) {
+  $queue = entityqueue_load($queue_item->qid);
   return array(
-    'path' => 'admin/structure/entityqueue/' . $queue_item->name,
+    'path' => 'admin/structure/entityqueue/' . $queue->name,
     'fragment' => 'item-' . $queue_item->qeid,
   );
 }
