@@ -55,12 +55,14 @@ function entityqueue_entity_info() {
 
   $types['entityqueueitem'] = array(
     'label' => t('Entity Queue Item'),
+    'controller class' => 'EntityQueueItemController',
     'base table' => 'entityqueue_entity',
     'load hook' => 'entityqueueitem_load',
     'uri callback' => 'entityqueueitem_uri',
     'fieldable' => TRUE,
     'entity keys' => array(
       'id' => 'qeid',
+      'bundle' => 'entityqueue_machine_name',
     ),
   );
 
@@ -68,7 +70,7 @@ function entityqueue_entity_info() {
     $types['entityqueueitem']['bundles'][$type] = array(
       'label' => $name,
       'admin' => array(
-        'path' => 'admin/structure/entityqueue/%entityqueue_by_name',
+        'path' => 'admin/structure/entityqueue/%',
         'real path' => 'admin/structure/entityqueue/' . $type,
         'bundle argument' => 3,
         'access callback' => 'entityqueue_access_admin_or_manage',
@@ -460,6 +462,68 @@ function entityqueueitem_load($qeid, $reset = FALSE) {
 }
 
 /**
+ * Save a queue item.
+ */
+function entityqueueitem_save(&$queueitem) {
+  $transaction = db_transaction();
+
+  try {
+    // Load stored entity, if any.
+    if (!empty($queueitem->qeid)) {
+      $queueitem->original = entity_load_unchanged('entityqueueitem', $queueitem->qeid);
+    }
+    field_attach_presave('entityqueueitem', $queueitem);
+    if (!isset($queueitem->is_new)) {
+      $queueitem->is_new = empty($queueitem->qeid);
+    }
+
+    module_invoke_all('entity_presave', $queueitem, 'entityqueueitem');
+
+    // Save the queue item.
+    if ($queueitem->is_new) {
+      drupal_write_record('entityqueue_entity', $queueitem);
+      $op = 'insert';
+
+      if (function_exists('views_invalidate_cache')) {
+        views_invalidate_cache();
+      }
+    }
+    else {
+      // For existing queue items, first we need to ensure that the weight is
+      // not already in use because of our unique key.
+      db_query("UPDATE {entityqueue_entity} SET weight=weight+1 WHERE qid=:qid AND weight>=:weight ORDER BY weight DESC", array(
+        ':qid' => $queueitem->qid,
+        ':weight' => $queueitem->weight,
+      ));
+      // Now update the queue item record.
+      drupal_write_record('entityqueue_entity', $queueitem, 'qeid');
+      $op = 'update';
+    }
+
+    // Save fields.
+    $function = "field_attach_$op";
+    $function('entityqueueitem', $queueitem);
+
+    module_invoke_all('entity_' . $op, $queueitem, 'entityqueueitem');
+
+    // Clear internal properties.
+    unset($queueitem->is_new);
+    unset($queueitem->original);
+    // Clear the static loading cache.
+    entity_get_controller('entityqueueitem')->resetCache(array($queueitem->qeid));
+
+    // Ignore slave server temporarily to give time for the
+    // saved entity to be propagated to the slave.
+    db_ignore_slave();
+  }
+  catch (Exception $e) {
+    $transaction->rollback();
+    watchdog_exception('entityqueue', $e);
+    throw $e;
+  }
+}
+
+/**
  * Load an entity object from the database.
  */
 function entityqueue_entity_to_arg($arg, $map, $index) {
@@ -682,11 +746,14 @@ function entityqueue_add_item($queue, $item) {
   if (!$weight) {
     $weight = 1;
   }
+  else {
+    $weight++;
+  }
 
-  $query = db_insert('entityqueue_entity');
-  $query->fields(array('qid', 'entity_type', 'entity_id', 'weight'))
-    ->values(array($queue->qid, $item->entity_type, $item->entity_id, $weight))
-    ->execute();
+  $item->qid = $queue->qid;
+  $item->weight = $weight;
+
+  return entityqueueitem_save($item);
 }
 
 /**
@@ -707,4 +774,23 @@ function entityqueueitem_uri($queue_item) {
     'path' => 'admin/structure/entityqueue/' . $queue->name,
     'fragment' => 'item-' . $queue_item->qeid,
   );
+}
+
+/**
+ * Controller class for entityqueue items.
+ *
+ * This extends the DrupalDefaultEntityController class.
+ */
+class EntityQueueItemController extends DrupalDefaultEntityController {
+
+  protected function buildQuery($ids, $conditions = array(), $revision_id = FALSE) {
+    $query = parent::buildQuery($ids, $conditions, $revision_id);
+    $query->addTag('translatable');
+    $query->addTag('entityqueueitem_access');
+    // Add machine name field from the {entityqueue_queue} table.
+    $query->innerJoin('entityqueue_queue', 'q', 'base.qid = q.qid');
+    $query->addField('q', 'name', 'entityqueue_machine_name');
+    return $query;
+  }
+
 }

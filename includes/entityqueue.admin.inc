@@ -127,6 +127,7 @@ function entityqueue_admin_view($queue) {
   $query->fields('ee', array('qeid'))
     ->condition('ee.qid', $queue->qid)
     ->orderBy('ee.weight');
+  // @todo add PagerQuery to actually support large queues
   $qeids = $query->execute()->fetchCol();
 
   // Load entityqueueitem entities
@@ -149,11 +150,18 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
 
   $form_state['queue'] = $queue;
 
-  foreach ($queue_items as $weight => $queue_item) {
+  $values = isset($form_state['values']) ? $form_state['values'] : array();
+  $item_vals = isset($values['queue_items']) ? $values['queue_items'] : array();
+
+  foreach ($queue_items as $key => $queue_item) {
     $type = $queue_item->entity_type;
     $id = $queue_item->entity_id;
     $entity = $queue_item->entity;
-    $key = $queue_item->qeid;
+
+    $form['queue_items'][$key] = array(
+      '#parents' => array('queue_items', $key),
+      '#entityqueueitem' => (array) $queue_item,
+    );
 
     $title = entity_label($type, $entity);
     $uri = entity_uri($type, $entity);
@@ -163,6 +171,20 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
       '#markup' => l($title, $path, $uri_options),
     );
 
+    $form['queue_items'][$key]['qeid'] = array(
+      '#type' => 'value',
+      '#value' => $queue_item->qeid,
+    );
+    $form['queue_items'][$key]['qid'] = array(
+      '#type' => 'value',
+      '#value' => $queue_item->qid,
+    );
+    $form['queue_items'][$key]['entityqueue_machine_name'] = array(
+      '#type' => 'value',
+      '#value' => $queue_item->entityqueue_machine_name,
+    );
+
+    $weight = isset($item_vals[$key]['weight']) ? $item_vals[$key]['weight'] : $queue_item->weight;
     $form['queue_items'][$key]['weight'] = array(
       '#type' => 'weight',
       '#delta' => $count,
@@ -191,15 +213,13 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
       '#options' => $options,
     );
 
-    $form_state['queue_items'][$key] = array(
-      'entityqueueitem' => $queue_item,
-    );
-    field_attach_form('entityqueueitem', $queue_item, $form['queue_items'][$key], $form_state['queue_items'][$key]);
+    field_attach_form('entityqueueitem', $queue_item, $form['queue_items'][$key], $form_state);
   }
 
   // Field for adding entities to queue
   $form['add'] = array(
     '#type' => 'container',
+    '#parents' => array('add'),
     '#attributes' => array(
       'class' => array('container-inline'),
     ),
@@ -219,9 +239,11 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
     '#validate' => array('entityqueue_arrange_form_add_validate'),
     '#submit' => array('entityqueue_arrange_form_add_submit'),
   );
-  $form_state['add'] = array();
-  $queue_item = new stdClass();
-  field_attach_form('entityqueueitem', $queue_item, $form['add'], $form_state['add']);
+  $queue_item = (object) array(
+    'qid' => $queue->qid,
+    'entityqueue_machine_name' => $queue->name,
+  );
+  field_attach_form('entityqueueitem', $queue_item, $form['add'], $form_state);
 
   $form['actions'] = array('#type' => 'actions');
   $form['actions']['submit'] = array(
@@ -232,12 +254,12 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
   $form['actions']['reverse'] = array(
     '#type' => 'submit',
     '#value' => t('Reverse'),
-    '#submit' => array('entityqueue_arrange_form_reverse_submit'),
+    '#submit' => array('entityqueue_arrange_form_submit'),
   );
   $form['actions']['shuffle'] = array(
     '#type' => 'submit',
     '#value' => t('Shuffle'),
-    '#submit' => array('entityqueue_arrange_form_shuffle_submit'),
+    '#submit' => array('entityqueue_arrange_form_submit'),
   );
   $form['actions']['clear'] = array(
     '#type' => 'submit',
@@ -262,9 +284,13 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
  */
 function entityqueue_arrange_form_add_validate($form, &$form_state) {
   $queue = $form_state['queue'];
-
-  if (isset($form_state['values']['queue_item'])) {
-    $value = $form_state['values']['queue_item'];
+  if (!isset($form_state['values']['add']['queue_item'])) {
+    form_set_error('add][queue_item', t('Please enter a valid @list', array(
+      '@list' => implode(', ', array_keys($queue->bundles)),
+    )));
+  }
+  else {
+    $value = $form_state['values']['add']['queue_item'];
     preg_match('/\[(\w+):(\d+)\]/', $value, $matches);
     $entity_type = $matches[1];
     $entity_id = $matches[2];
@@ -273,16 +299,15 @@ function entityqueue_arrange_form_add_validate($form, &$form_state) {
         '@list' => implode(', ', array_keys($queue->bundles)),
       )));
     }
+    $queue_item = (object) array_merge($form_state['values']['add'], array(
+      'qid' => $queue->qid,
+      'entityqueue_machine_name' => $queue->name,
+      'entity_type' => $entity_type,
+      'entity_id' => $entity_id,
+    ));
+    $form_state['values']['entityqueueitem'] = $queue_item;
+    field_attach_form_validate('entityqueueitem', $queue_item, $form['add'], $form_state);
   }
-
-  $queue_item = (object) array(
-    'entity_type' => $entity_type,
-    'entity_id' => $entity_id,
-  );
-  $form_state['values']['entityqueueitem'] = $queue_item;
-
-  // @todo need to add field validation
-  //entity_form_field_validate('entityqueueitem', $form, $form_state);
 }
 
 /**
@@ -292,9 +317,90 @@ function entityqueue_arrange_form_add_validate($form, &$form_state) {
  */
 function entityqueue_arrange_form_add_submit($form, &$form_state) {
   $queue = $form_state['queue'];
+  $item = $form_state['values']['entityqueueitem'];
+  entityqueue_add_item($queue, $item);
+}
 
-  // @todo build entityqueueitem
-  entityqueue_add_item($queue, $form_state['values']['entityqueueitem']);
+/**
+ * Form validiation handler.
+ *
+ * @see  entityqueue_arrange_form()
+ */
+function entityqueue_arrange_form_validate($form, &$form_state) {
+  $weights = array();
+  $values = isset($form_state['values']) ? $form_state['values'] : array();
+  $item_vals = isset($values['queue_items']) ? $values['queue_items'] : array();
+  $trigger = $form_state['triggering_element'];
+
+  // Random order
+  if ($trigger['#value'] == t('Shuffle')) {
+    // Weights could be negative, we need to convert it to an actual position.
+    foreach ($item_vals as $key => $item_data) {
+      $weights[] = $item_data['weight'];
+      // Keep track of the original key because array_multisort() will reset it
+      // because it is numeric, and we need it to tie to the $form elements.
+      $item_vals[$key]['#original_key'] = $key;
+    }
+    // Shuffle
+    shuffle($item_vals);
+  }
+  // Weight order
+  else {
+    // Weights could be negative, we need to convert it to an actual position.
+    foreach ($item_vals as $key => $item_data) {
+      $weights[] = $item_data['weight'];
+      // Keep track of the original key because array_multisort() will reset it
+      // because it is numeric, and we need it to tie to the $form elements.
+      $item_vals[$key]['#original_key'] = $key;
+    }
+    // Reverse order
+    if ($trigger['#value'] == t('Reverse')) {
+      $order = SORT_DESC;
+    }
+    else {
+      $order = SORT_ASC;
+    }
+    array_multisort($weights, $order, $item_vals);
+  }
+
+  $weight = 1;
+  $form_state['values']['queue_items'] = array();
+  foreach ($item_vals as $item_data) {
+    $item_data['weight'] = $weight++;
+    $key = $item_data['#original_key'];
+    unset($item_data['#original_key']);
+    $form_state['values']['queue_items'][$key] = $item_data;
+  }
+}
+
+/**
+ * Form submit handler.
+ *
+ * @see  entityqueue_arrange_form()
+ */
+function entityqueue_arrange_form_clear_submit($form, &$form_state) {
+  $qeids = array();
+  $values = isset($form_state['values']) ? $form_state['values'] : array();
+  $item_vals = isset($values['queue_items']) ? $values['queue_items'] : array();
+  foreach ($item_vals as $item_data) {
+    $qeids[] = $item_data['qeid'];
+  }
+  entityqueueitem_delete_multiple($qeids);
+}
+
+/**
+ * Form submission handler.
+ *
+ * @see  entityqueue_arrange_form()
+ */
+function entityqueue_arrange_form_submit($form, &$form_state) {
+  $queue_items = $form_state['values']['queue_items'];
+  foreach ($queue_items as $key => $item_data) {
+    $queue_item = (object) $form['queue_items'][$key]['#entityqueueitem'];
+    $queue_item->weight = $item_data['weight'];
+    entity_form_submit_build_entity('entityqueueitem', $queue_item, $form['queue_items'][$key], $form_state);
+    entityqueueitem_save($queue_item);
+  }
 }
 
 /**
