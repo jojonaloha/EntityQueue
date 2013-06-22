@@ -209,7 +209,7 @@ function entityqueue_arrange_form($form, &$form_state, $queue, $queue_items) {
     $form['queue_items'][$key]['remove'] = array(
       '#type' => 'link',
       '#title' => t('remove'),
-      '#href' => 'entityqueue/' . $queue->qid . '/remove/' . $type . '/' . $id,
+      '#href' => 'entityqueue/' . $queue->qid . '/remove/' . $queue_item->qeid,
       '#options' => $options,
     );
 
@@ -401,6 +401,44 @@ function entityqueue_arrange_form_submit($form, &$form_state) {
     entity_form_submit_build_entity('entityqueueitem', $queue_item, $form['queue_items'][$key], $form_state);
     entityqueueitem_save($queue_item);
   }
+}
+
+/**
+ * Form builder.
+ */
+function entityqueue_admin_remove_entity($form, &$form_state, $queue, $queue_item) {
+  // Check that the item we are removing is in the queue we specified.
+  if ($queue_item->qid !== $queue->qid) {
+    drupal_set_message(t('The item is not in that queue, and cannot be removed from it.'), 'error');
+    drupal_goto('admin/structure/entityqueue/' . $queue->name);
+  }
+
+  $form['qeid'] = array(
+    '#type' => 'value',
+    '#value' => $queue_item->qeid,
+  );
+
+  $cancel_url = entity_uri('entityqueueitem', $queue_item);
+
+  return confirm_form($form, t('Are you sure you want to remove the %entity_type %label from the %queue?', array(
+    '%entity_type' => $queue_item->entity_type,
+    '%label' => entity_label($queue_item->entity_type, $queue_item->entity),
+    '%queue' => $queue->title,
+  )), $cancel_url);
+}
+
+/**
+ * Form submission handler.
+ */
+function entityqueue_admin_remove_entity_submit($form, &$form_state) {
+  $queue_item = entityqueueitem_load($form_state['values']['qeid']);
+  entityqueue_remove_item($queue_item);
+  drupal_set_message(t('The item %entity_type %label has been removed from the queue.', array(
+    '%entity_type' => $queue_item->entity_type,
+    '%label' => entity_label($queue_item->entity_type, $queue_item->entity),
+  )));
+  $form_state['redirect'] = 'admin/structure/entityqueue/' . $queue_item->entityqueue_machine_name;
+  return;
 }
 
 /**

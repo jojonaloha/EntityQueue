@@ -28,6 +28,19 @@ function entityqueue_entity_delete($entity, $type) {
 }
 
 /**
+ * Implements hook_entityqueueitem_post_delete().
+ */
+function entityqueue_entityqueueitem_post_delete($queue_items) {
+  foreach ($queue_items as $queue_item) {
+    // Adjust all the weights of the items that came after this one in the queue.
+    db_query("UPDATE {entityqueue_entity} SET weight=weight-1 WHERE qid=:qid AND weight>:weight ORDER BY weight ASC", array(
+      ':qid' => $queue_item->qid,
+      ':weight' => $queue_item->weight,
+    ));
+  }
+}
+
+/**
  * Implements hook_entity_info()
  */
 function entityqueue_entity_info() {
@@ -256,6 +269,8 @@ function entityqueue_menu() {
     'type' => MENU_CALLBACK,
   );
 
+  // @todo Remove? Doesn't look like this will be needed, entities are
+  // added to the queue from entityqueue_arrange_form().
   $items['entityqueue/%entityqueue/add/%/%entityqueue_entity'] = array(
     'page callback' => 'entityqueue_admin_add_entity',
     'page arguments' => array(1, 3),
@@ -265,11 +280,11 @@ function entityqueue_menu() {
     'type' => MENU_CALLBACK,
   );
 
-  $items['entityqueue/%entityqueue/remove/%/%entityqueue_entity'] = array(
-    'page callback' => 'entityqueue_admin_remove_entity',
-    'page arguments' => array(1, 3),
-    'access callback' => 'entityqueue_entity_and_queue_access',
-    'access arguments' => array(3, 4, 1),
+  $items['entityqueue/%entityqueue/remove/%entityqueueitem'] = array(
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('entityqueue_admin_remove_entity', 1, 3),
+    'access callback' => 'entityqueue_queue_access',
+    'access arguments' => array(1),
     'file' => 'includes/entityqueue.admin.inc',
     'type' => MENU_CALLBACK,
   );
@@ -604,6 +619,7 @@ function entityqueueitem_delete_multiple($qeids) {
       db_delete('entityqueue_entity')
         ->condition('qeid', $qeids, 'IN')
         ->execute();
+      module_invoke_all('entityqueueitem_post_delete', $items);
     }
     catch (Exception $e) {
       $transaction->rollback();
@@ -757,6 +773,17 @@ function entityqueue_add_item($queue, $item) {
 }
 
 /**
+ * Remove an item from a queue.
+ *
+ * @param  object $queue_item
+ *   The entityqueueitem object to remove.
+ */
+function entityqueue_remove_item($queue_item) {
+  $qeids = array($queue_item->qeid);
+  entityqueueitem_delete_multiple($qeids);
+}
+
+/**
  * Entity uri callback.
  */
 function entityqueue_uri($queue) {
@@ -772,7 +799,9 @@ function entityqueueitem_uri($queue_item) {
   $queue = entityqueue_load($queue_item->qid);
   return array(
     'path' => 'admin/structure/entityqueue/' . $queue->name,
-    'fragment' => 'item-' . $queue_item->qeid,
+    'options' => array(
+      'fragment' => 'item-' . $queue_item->qeid,
+    ),
   );
 }
 
