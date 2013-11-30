@@ -183,6 +183,13 @@ function entityqueue_forms($form_id) {
 }
 
 /**
+ * Implements hook_init().
+ */
+function entityqueue_init() {
+  drupal_set_message(t('The EntityQueue module is not recommended for production use. It is an unsupported experimental module and has been abandoned in favor of <a href="!url">entityqueue on Drupal.org</a>', array('!url' => 'https://drupal.org/sandbox/amateescu/1429904')), 'error');
+}
+
+/**
  * Implements hook_menu()
  */
 function entityqueue_menu() {
